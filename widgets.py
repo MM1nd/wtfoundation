@@ -55,6 +55,10 @@ class AbideInput(_Input):
 
     """
     Will translate any Validators in the input into Abide/HTML5 patterns.
+
+    For the better or worse, abide requires a class form-error element after the input so this should be the last thing called
+    before WTForms Input base class, in other words, place it last in your mixins.
+
     The required flag will be rendered as the required attribute if set.
 
     All patterns will be collected in a class variable ``custom_patterns`` which the user will need to employ in JavaScript.
@@ -83,7 +87,13 @@ class AbideInput(_Input):
         pattern = None
         length_validator = None
 
+        messages = []
+
         for validator in field.validators:
+
+            if validator.message:
+                messages.append(validator.message)
+
             try:
                 new_pattern = validator.pattern
                 assert (not pattern), "Do not mix validators that define a pattern"
@@ -119,7 +129,19 @@ class AbideInput(_Input):
         if field.flags.required:
             kwargs["required"]= True
 
-        return super().__call__(field, **kwargs)
+        
+        message = " Oder "
+
+        if len(messages)>0:
+            message = message.join(messages)
+        else:
+            message = ""
+
+        abide_handler = '<span class="form-error"><i class="fi-x"></i> %s</span>' % message
+
+        result = super().__call__(field, **kwargs) + abide_handler
+
+        return HTMLString(result)
 
 class RowInput(_Input):
     """
@@ -157,7 +179,7 @@ class RowInput(_Input):
 
         return HTMLString(div_row)
 
-class AbideRowInput(AbideInput, RowInput):
+class AbideRowInput(RowInput, AbideInput):
     pass
 
 class PasswordInput(_PasswordInput, AbideRowInput):
