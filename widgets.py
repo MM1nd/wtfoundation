@@ -1,4 +1,8 @@
 from wtforms.widgets import HTMLString
+from wtforms.widgets import PasswordInput as _PasswordInput
+from wtforms.widgets import Input as _Input
+from wtforms.widgets import TextInput as _TextInput
+from wtforms.widgets.html5 import EmailInput as _EmailInput
 from wtforms.validators import Length
 from warnings import warn
 
@@ -13,7 +17,7 @@ from wtforms.compat import text_type, iteritems
 
 def html_params(**kwargs):
     """
-    This is Verbatim from WTForms BUT ``aria_`` is handled like ``data_``
+    This is Verbatim from WTForms BUT "aria_" is handled like "data_"
 
     Generate HTML attribute syntax from inputted keyword arguments.
     The output value is sorted by the passed keys, to provide consistent output
@@ -47,39 +51,35 @@ def html_params(**kwargs):
             params.append('%s="%s"' % (text_type(k), escape(text_type(v), quote=True)))
     return ' '.join(params)
 
+class AbideInput(_Input):
 
-
-class RowInput(object):
     """
-    Replaces WTForms.Input AND WTForms.PasswordInput
+    Will translate any Validators in the input into Abide/HTML5 patterns.
+    The required flag will be rendered as the required attribute if set.
 
-    Render a basic ``<input>`` field.
+    All patterns will be collected in a class variable ``custom_patterns`` which the user will need to employ in JavaScript.
 
-    BUT Take up the entire row AND render the label AND translate validators into abide/html5
+    E. g.:
 
-    This is used as the basis for most of the other input fields.
-    By default, the `_value()` method will be called upon the associated field
-    to provide the ``value=`` HTML attribute.
+    {% for key, value in custom_patterns.items() %}
+        Foundation.Abide.defaults['patterns']['{{ key }}'] = {{ value }};
+    {% endfor %}
+    
+    To this end the validator needs to define a pattern attribute, that contains its regex. 
+    If multiple validators define a pattern, an assert will fail.
+    
+    Also the Length validator from wtforms is handled specially:
+    If a Length validator is present, minlength and maxlength in the Input are set accordingly.
+    If a Length validator is set and no other validator defines a pattern a pattern is generated to actually
+    validate against minlength, something contemporary browsers do not. Otherwise the pattern from the other
+    validator is used.
+    If multiple Length validators are present, an assert will fail.
     """
 
-    html_params = staticmethod(html_params)
-
-    custom_patterns = {}
-
-    def __init__(self, input_type=None):
-        if input_type is not None:
-            self.input_type = input_type
+    custom_patterns={}
 
     def __call__(self, field, **kwargs):
 
-        kwargs.setdefault('id', field.id)
-        kwargs.setdefault('type', self.input_type)
-        if 'value' not in kwargs and self.input_type!="password":
-            kwargs['value'] = field._value()
-        if self.input_type=="password":
-            kwargs['value'] = ""
-
-        
         pattern = None
         length_validator = None
 
@@ -108,28 +108,63 @@ class RowInput(object):
             if length_validator.max!=-1:
                 custom_pattern = custom_pattern % length_validator.max
             
-            if field.id in RowInput.custom_patterns and RowInput.custom_patterns[field.id]!=custom_pattern:
-                warn("Field %s validation pattern has been overridden. This might indicate that the field.id is not unique application wide." & field.id)
-            RowInput.custom_patterns[field.id]=custom_pattern
+            if field.id in self.__class__.custom_patterns and self.__class__.custom_patterns[field.id]!=custom_pattern:
+                warn("Field %s validation pattern has been overridden. This might indicate that the field.id is not unique application wide." % field.id)
+
+            self.__class__.custom_patterns[field.id]=custom_pattern
+
         if pattern:
             kwargs["pattern"]=pattern
 
+        if field.flags.required:
+            kwargs["required"]= True
+
+        return super().__call__(field, **kwargs)
+
+class RowInput(_Input):
+    """
+    Embed an input in a row.
+    Renders label an description alongside the input.
+    """
+
+    html_params = staticmethod(html_params)
+
+    def __call__(self, field, **kwargs):
 
         desc_id = field.id+"-desc"
 
-        div_row = "<div %s>\n%s\n%s\n</div>" % (self.html_params(class_="row"), "%s", "%s")
+        div_row = "<div %s> \n %s \n %s \n </div>" % (self.html_params(class_="row"), "%s", "%s")
         
-        div_label_col = "<div %s>\n%s\n</div>" % (self.html_params(class_="large-2 columns show-for-large"), "%s")
-        div_label_col_label = "<label %s>%s</label>" % (self.html_params(class_="text-right middle", for_=field.id), field.label)
+        div_label_col = "<div %s> \n %s \n </div>" % (self.html_params(class_="large-2 columns show-for-large"), "%s")
+
+        div_label_col_label = "<label %s> %s </label>" % (self.html_params(class_="text-right middle", for_=field.id), field.label)
+
         div_label_col = div_label_col % div_label_col_label
 
-        div_col = "<div %s>\n%s\n%s\n%s\n</div>"  % (self.html_params(class_="small-12 large-10 columns"), "%s", "%s", "%s")
-        label = "<label %s>%s</label>" % (self.html_params(class_="hide-for-large", for_=field.id), field.label)
+        div_col = "<div %s> \n %s \n %s \n %s \n </div>"  % (self.html_params(class_="small-12 large-10 columns"), "%s", "%s", "%s")
 
-        input = "<input %s %s>" % (self.html_params(name=field.name, aria_describedby=desc_id, **kwargs), "required" if field.flags.required else "")
-        desc = "<p %s>%s</p>" % (self.html_params(class_="help-text", id=desc_id), field.description)
+        label = "<label %s> %s </label>" % (self.html_params(class_="hide-for-large", for_=field.id), field.label)
+
+        kwargs["aria_describedby"]=desc_id
+
+        input = super(RowInput, self).__call__(field, **kwargs)
+
+        desc = "<p %s> %s </p>" % (self.html_params(class_="help-text", id=desc_id), field.description)
 
         div_col = div_col % (label, input, desc)
+
         div_row = div_row % (div_label_col, div_col)
 
         return HTMLString(div_row)
+
+class AbideRowInput(AbideInput, RowInput):
+    pass
+
+class PasswordInput(_PasswordInput, AbideRowInput):
+    pass
+
+class TextInput(_TextInput, AbideRowInput):
+    pass
+
+class EmailInput(_EmailInput, AbideRowInput):
+    pass
